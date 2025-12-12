@@ -1,0 +1,251 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Mini Advanced Trading Journal → Notion-ready</title>
+  <style>
+    :root{--bg:#0f1724;--card:#0b1220;--muted:#94a3b8;--accent:#7c3aed}
+    body{font-family:Inter,system-ui,Segoe UI,Arial;background:linear-gradient(180deg,#071127 0%,#071720 100%);color:#e6eef6;margin:0;padding:20px}
+    .wrap{max-width:980px;margin:0 auto}
+    header{display:flex;gap:16px;align-items:center}
+    h1{font-size:20px;margin:0}
+    .card{background:var(--card);padding:14px;border-radius:10px;margin-top:14px;box-shadow:0 4px 18px rgba(2,6,23,.6)}
+    form{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px;align-items:end}
+    label{font-size:12px;color:var(--muted)}
+    input,select{width:100%;padding:8px;border-radius:8px;border:1px solid rgba(255,255,255,.04);background:transparent;color:inherit}
+    .full{grid-column:1/-1}
+    button{background:linear-gradient(90deg,var(--accent),#5b21b6);border:none;padding:10px 12px;border-radius:10px;color:white;cursor:pointer}
+    table{width:100%;border-collapse:collapse;margin-top:12px}
+    th,td{padding:8px;text-align:left;border-bottom:1px solid rgba(255,255,255,.03);font-size:13px}
+    .row-actions{display:flex;gap:6px}
+    .muted{color:var(--muted);font-size:13px}
+    .grid{display:grid;grid-template-columns:1fr 360px;gap:12px}
+    canvas{background:#071227;border-radius:8px;padding:8px}
+    .small{font-size:12px}
+    .btn-ghost{background:transparent;border:1px solid rgba(255,255,255,.06);padding:8px;border-radius:8px;color:var(--muted)}
+    footer{margin-top:14px;color:var(--muted);font-size:13px}
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <header>
+      <h1>Mini Advanced Trading Journal — Notion-ready</h1>
+      <div class="muted small">(local + CSV export + optional Notion sync)</div>
+    </header>
+
+    <div class="card">
+      <form id="tradeForm">
+        <div>
+          <label>Date</label>
+          <input type="date" id="date" required />
+        </div>
+        <div>
+          <label>Pair / Asset</label>
+          <input id="pair" placeholder="BTC/USD" />
+        </div>
+        <div>
+          <label>Direction</label>
+          <select id="direction"><option>Buy</option><option>Sell</option></select>
+        </div>
+        <div>
+          <label>P&amp;L (numeric)</label>
+          <input id="pl" type="number" step="0.01" placeholder="e.g. 25.50 or -12.40" required />
+        </div>
+
+        <div class="full">
+          <label>One-line reason (optional)</label>
+          <input id="reason" placeholder="Why this trade? max 80 chars" />
+        </div>
+
+        <div>
+          <label>&nbsp;</label>
+          <button type="submit">Add Trade</button>
+        </div>
+
+        <div>
+          <label>&nbsp;</label>
+          <button type="button" class="btn-ghost" id="exportCsvBtn">Export CSV</button>
+        </div>
+
+        <div>
+          <label>&nbsp;</label>
+          <button type="button" class="btn-ghost" id="notionCsvBtn">Export Notion CSV</button>
+        </div>
+
+        <div>
+          <label>&nbsp;</label>
+          <button type="button" class="btn-ghost" id="clearBtn">Clear All (local)</button>
+        </div>
+
+      </form>
+
+      <div style="margin-top:12px" class="grid">
+        <div>
+          <div class="muted small">Trades</div>
+          <table id="tradesTable">
+            <thead><tr><th>Date</th><th>Pair</th><th>Dir</th><th>P&amp;L</th><th class="small">Reason</th><th></th></tr></thead>
+            <tbody></tbody>
+          </table>
+        </div>
+
+        <div>
+          <div class="muted small">Daily P&amp;L</div>
+          <canvas id="plChart" width="360" height="220"></canvas>
+          <div style="display:flex;gap:8px;margin-top:8px">
+            <input id="notionToken" placeholder="Notion Integration Token (optional)" />
+            <input id="notionDb" placeholder="Notion DB ID (optional)" />
+          </div>
+          <div style="display:flex;gap:8px;margin-top:8px">
+            <button class="btn-ghost" id="syncNotionBtn">Sync to Notion (optional)</button>
+            <button class="btn-ghost" id="bulkUpdateBtn">Bulk P&amp;L Recalc</button>
+          </div>
+        </div>
+      </div>
+
+      <footer>
+        Tip: Use "Export Notion CSV" to import directly into a Notion database. Or paste your <code>Notion Integration Token</code> + <code>Database ID</code> and press <strong>Sync to Notion</strong> (see comments in the code for mapping requirements).
+      </footer>
+    </div>
+  </div>
+
+  <!-- Chart.js CDN -->
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  <script>
+    // Simple local trading log with daily P&L graph and Notion import helpers.
+    const STORAGE_KEY = 'mini_trading_journal_entries_v1'
+
+    function uid(){return Math.random().toString(36).slice(2,9)}
+
+    function loadEntries(){
+      try{const raw = localStorage.getItem(STORAGE_KEY); return raw?JSON.parse(raw):[] }catch(e){return[]}
+    }
+    function saveEntries(entries){ localStorage.setItem(STORAGE_KEY, JSON.stringify(entries)) }
+
+    function addEntry(e){
+      e.preventDefault();
+      const date = document.getElementById('date').value
+      const pair = document.getElementById('pair').value || ''
+      const direction = document.getElementById('direction').value
+      const pl = parseFloat(document.getElementById('pl').value) || 0
+      const reason = document.getElementById('reason').value || ''
+      if(!date){ alert('Pick a date'); return }
+      const entries = loadEntries()
+      entries.push({id: uid(), date, pair, direction, pl, reason})
+      saveEntries(entries)
+      renderTable(); updateChart(); document.getElementById('tradeForm').reset()
+    }
+
+    function renderTable(){
+      const tbody = document.querySelector('#tradesTable tbody'); tbody.innerHTML=''
+      const entries = loadEntries().sort((a,b)=> a.date.localeCompare(b.date))
+      for(const row of entries){
+        const tr = document.createElement('tr')
+        tr.innerHTML = `<td>${row.date}</td><td>${escapeHtml(row.pair)}</td><td>${row.direction}</td><td>${row.pl.toFixed(2)}</td><td class="small">${escapeHtml(row.reason)}</td><td class="row-actions"><button data-id="${row.id}" class="btn-ghost del">Del</button></td>`
+        tbody.appendChild(tr)
+      }
+      document.querySelectorAll('.del').forEach(btn=>btn.onclick = ()=>{deleteEntry(btn.dataset.id)})
+    }
+
+    function deleteEntry(id){
+      let entries = loadEntries(); entries = entries.filter(r=>r.id!==id); saveEntries(entries); renderTable(); updateChart()
+    }
+
+    // Chart: group P&L by date (sum)
+    let chart=null
+    function updateChart(){
+      const entries = loadEntries()
+      const groups = {}
+      entries.forEach(r=>{ groups[r.date] = (groups[r.date] || 0) + Number(r.pl) })
+      const labels = Object.keys(groups).sort()
+      const data = labels.map(d=>+groups[d].toFixed(2))
+      const ctx = document.getElementById('plChart')
+      if(chart) chart.destroy()
+      chart = new Chart(ctx, { type:'bar', data:{labels, datasets:[{label:'Daily P&L', data}]}, options:{plugins:{legend:{display:false}},scales:{y:{beginAtZero:false}}} })
+    }
+
+    function exportCSV(){
+      const entries = loadEntries().sort((a,b)=>a.date.localeCompare(b.date))
+      if(!entries.length){ alert('No trades to export'); return }
+      const header = ['Date','Pair','Direction','P&L','Reason']
+      const rows = entries.map(r=>[r.date, r.pair, r.direction, r.pl, r.reason])
+      downloadCSV([header,...rows], 'trading-journal.csv')
+    }
+
+    function exportNotionCSV(){
+      // Notion expects a CSV where column headers match database property names.
+      // A recommended simple mapping:
+      // Date -> Date, Pair -> Title, Direction -> Select, P&L -> Number, Reason -> Text
+      const entries = loadEntries().sort((a,b)=>a.date.localeCompare(b.date))
+      if(!entries.length){ alert('No trades to export'); return }
+      const header = ['Date','Pair','Direction','P&L','Reason']
+      const rows = entries.map(r=>[r.date, r.pair, r.direction, r.pl, r.reason])
+      downloadCSV([header,...rows],'notion-import.csv')
+    }
+
+    function downloadCSV(rows, filename){
+      const csv = rows.map(r=>r.map(cell=>`"${String(cell).replace(/"/g,'""')}"`).join(',')).join('\n')
+      const blob = new Blob([csv], {type:'text/csv;charset=utf-8;'})
+      const url = URL.createObjectURL(blob)
+      const a = document.createElement('a'); a.href = url; a.download = filename; a.click(); URL.revokeObjectURL(url)
+    }
+
+    function bulkRecalculate(){ updateChart(); alert('Recalculated daily P&L and refreshed chart.') }
+
+    // Optional: Sync to Notion using Notion API v1
+    // WARNING: This uses your Notion integration token and database id. Keep them secret.
+    // To use: paste your secret token in the "Notion Integration Token" field and the target Database ID in the other field, then click Sync.
+    // The target Notion database should have properties named: Date (date), Pair (title), Direction (select), P&amp;L (number), Reason (rich_text)
+    async function syncToNotion(){
+      const token = document.getElementById('notionToken').value.trim()
+      const dbId = document.getElementById('notionDb').value.trim()
+      if(!token || !dbId){ alert('Enter both Notion token and database id (or use CSV import).'); return }
+      const entries = loadEntries()
+      if(!entries.length){ alert('No entries to sync'); return }
+      if(!confirm(`This will attempt to create ${entries.length} pages in the Notion database.`)) return
+
+      const baseUrl = 'https://api.notion.com/v1/pages'
+      const headers = { 'Authorization': 'Bearer '+token, 'Notion-Version': '2022-06-28', 'Content-Type': 'application/json' }
+
+      for(const r of entries){
+        // Build properties object - change this mapping if your DB uses different property names/types
+        const body = {
+          parent: { database_id: dbId },
+          properties: {
+            'Pair': { title: [{ text: { content: r.pair || '—' } }] },
+            'Date': { date: { start: r.date } },
+            'Direction': { select: { name: r.direction } },
+            'P&L': { number: Number(r.pl) },
+            'Reason': { rich_text: [{ text: { content: r.reason || '' } }] }
+          }
+        }
+
+        try{
+          const res = await fetch(baseUrl, { method:'POST', headers, body: JSON.stringify(body) })
+          if(!res.ok){
+            const txt = await res.text(); console.error('Notion API error',res.status,txt); alert('Notion API returned an error — check console.'); break
+          }
+        }catch(err){ console.error('Network error',err); alert('Network error when contacting Notion API. See console.'); break }
+      }
+      alert('Sync attempt finished (check Notion).')
+    }
+
+    function escapeHtml(s){ return (s||'').toString().replace(/[&<>\"]/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','\"':'&quot;'})[m]) }
+
+    // wire up
+    document.getElementById('tradeForm').addEventListener('submit', addEntry)
+    document.getElementById('exportCsvBtn').addEventListener('click', exportCSV)
+    document.getElementById('notionCsvBtn').addEventListener('click', exportNotionCSV)
+    document.getElementById('clearBtn').addEventListener('click', ()=>{ if(confirm('Clear local data?')){ localStorage.removeItem(STORAGE_KEY); renderTable(); updateChart() }})
+    document.getElementById('syncNotionBtn').addEventListener('click', syncToNotion)
+    document.getElementById('bulkUpdateBtn').addEventListener('click', bulkRecalculate)
+
+    // initialize demo: set today as default date
+    (function init(){
+      const d = new Date(); document.getElementById('date').value = d.toISOString().slice(0,10)
+      renderTable(); updateChart()
+    })()
+
+  </script>
+</body>
+</html>
